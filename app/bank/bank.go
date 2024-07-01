@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 )
 
 // Bank represents an institution that offers basic financial accounts
@@ -21,9 +22,10 @@ import (
 // current session and therefore values used then are not available for
 // checking in the next session.
 type Bank struct {
-	name     string
-	balance  int
-	requests map[string]string // maps idempotency keys to transaction IDs
+	name         string
+	balance      int
+	requests     map[string]string // idempotency keys => transaction IDs
+	requestsLock sync.Mutex 
 }
 
 // NewBank returns a Bank instance for the named account. The balance
@@ -39,7 +41,7 @@ func NewBank(name string) *Bank {
 
 	previousBalance, err := bank.load()
 	if err != nil {
-		log.Println("ERROR: Failed to load account data from previous session: %v", err)
+		log.Printf("ERROR: Failed to load account data from previous session: %v\n", err)
 	}
 
 	bank.balance = previousBalance
@@ -79,11 +81,13 @@ func (bank *Bank) Deposit(amount int, idempotencyKey string) (string, error) {
 
 	bank.balance = bank.balance + amount
 	txID := generateTransactionID("D", 10)
+	bank.requestsLock.Lock()
 	bank.requests[idempotencyKey] = txID
+	bank.requestsLock.Unlock()
 
 	err := bank.save()
 	if err != nil {
-		log.Println("ERROR: could not save account data following deposit: %v", err)
+		log.Printf("ERROR: could not save account data following deposit: %v\n", err)
 		return "", err
 	}
 
@@ -119,11 +123,13 @@ func (bank *Bank) Withdraw(amount int, idempotencyKey string) (string, error) {
 
 	bank.balance = bank.balance - amount
 	txID := generateTransactionID("W", 10)
+	bank.requestsLock.Lock()
 	bank.requests[idempotencyKey] = txID
+	bank.requestsLock.Unlock()
 
 	err := bank.save()
 	if err != nil {
-		log.Println("ERROR: could not save account data following withdrawal: %v", err)
+		log.Printf("ERROR: could not save account data following withdrawal: %v\n", err)
 		return "", err
 	}
 
@@ -173,13 +179,13 @@ func (bank *Bank) load() (int, error) {
 
 		db, err := os.ReadFile(dataFileName)
 		if err != nil {
-			log.Println("ERROR: problem loading file '%s': %v", dataFileName, err)
+			log.Printf("ERROR: problem loading file '%s': %v\n", dataFileName, err)
 			return -1, err
 		}
 
 		err = json.Unmarshal([]byte(db), &balance)
 		if err != nil {
-			log.Println("ERROR: could not unmarshal account info: %v", err)
+			log.Printf("ERROR: could not unmarshal account info: %v\n", err)
 			return -1, err
 		}
 	}
